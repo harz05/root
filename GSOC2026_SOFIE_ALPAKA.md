@@ -161,8 +161,7 @@ cd src/SOFIE_core/test && ./TestCustomModelsFromONNXForAlpakaCuda
 
 alpaka and sofieBLAS are fetched automatically via CMake FetchContent. Requires CUDA toolkit.
 
-A Google Colab notebook for running the tests on a free T4 GPU is included in the
-SOFIE fork: `SOFIE_Alpaka_Test.ipynb`
+##### A Google Colab notebook for running the tests on a free T4 GPU is included in the SOFIE fork: `SOFIE_Alpaka_Test.ipynb`
 
 ---
 
