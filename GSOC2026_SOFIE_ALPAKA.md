@@ -61,7 +61,7 @@ The architecture works as follows:
 Existing alpaka operators at the time of this work: Sigmoid, LeakyRelu.
 
 Potential improvements identified:
-- Several common activation operators (Tanh, Elu, Softmax) had no GPU implementation
+- Several common activation operators (Tanh, Elu, Softmax, Selu) had no GPU implementation
 - ROOT's `tmva/sofie` CMakeLists does not yet wire up alpaka tests - this needs integration
 - The Softmax operator requires a reduction (not just elementwise), which is a more interesting parallelization problem
 
@@ -75,6 +75,7 @@ Potential improvements identified:
 - `ROperator_Tanh.hxx`
 - `ROperator_Elu.hxx`
 - `ROperator_Softmax.hxx`
+- `ROperator_Selu.hxx`
 
 **Test file** (in `tmva/sofie/test/`):
 - `TestCustomModelsFromONNXForAlpakaCuda.cxx`
@@ -109,13 +110,24 @@ Reduction-based operator, more complex than the above two. Softmax must be compu
 
 The implementation decomposes the input tensor into (numRows, rowSize) along the softmax axis and assigns one thread per row. Each thread handles the full reduction for its row sequentially. This is correct and numerically stable, though a more optimized version could use shared memory for the reduction.
 
+**Selu**
+
+Elementwise operator with fixed constants alpha and lambda:
+```
+out[i] = lambda * (x > 0 ? x : alpha * (exp(x) - 1))
+where alpha  = 1.6732632423543772848170429916717
+      lambda = 1.0507009873554804934193349852946
+```
+Uses a single shared kernel instance across all layers in the model, following the same pattern as the existing Sigmoid implementation.
+
 ### Unit Tests
 
-Three test cases added to `TestCustomModelsFromONNXForAlpakaCuda.cxx`, matching the same inputs used in the CPU tests in `TestCustomModelsFromONNX.cxx`:
+Four test cases added to `TestCustomModelsFromONNXForAlpakaCuda.cxx`, matching the same inputs used in the CPU tests in `TestCustomModelsFromONNX.cxx`:
 
 - `SofieAlpakaTest.Tanh` - input size 24, random values
 - `SofieAlpakaTest.Elu` - input shape [2,3], mixed positive and negative values
 - `SofieAlpakaTest.Softmax1d` - input size 3, values [-1, 0, 1]
+- `SofieAlpakaTest.LinearWithSelu` - linear model with Selu activation, all-ones input size 48, output size 24
 
 Each test allocates a host buffer, copies to device, runs `session.infer()`, copies back, and compares element-wise against reference outputs with tolerance 1e-3.
 
@@ -126,15 +138,15 @@ Tests were run on an NVIDIA T4 GPU via Google Colab using the standalone SOFIE r
 yet have alpaka test integration.
 
 ```
-[==========] Running 8 tests from 1 test suite.
+[==========] Running 9 tests from 1 test suite.
 [ RUN      ] SofieAlpakaTest.Linear16
-[       OK ] SofieAlpakaTest.Linear16 (443 ms)
+[       OK ] SofieAlpakaTest.Linear16 (507 ms)
 [ RUN      ] SofieAlpakaTest.Linear32
-[       OK ] SofieAlpakaTest.Linear32 (48 ms)
+[       OK ] SofieAlpakaTest.Linear32 (45 ms)
 [ RUN      ] SofieAlpakaTest.Linear64
-[       OK ] SofieAlpakaTest.Linear64 (18 ms)
+[       OK ] SofieAlpakaTest.Linear64 (10 ms)
 [ RUN      ] SofieAlpakaTest.LinearWithLeakyRelu
-[       OK ] SofieAlpakaTest.LinearWithLeakyRelu (417 ms)
+[       OK ] SofieAlpakaTest.LinearWithLeakyRelu (291 ms)
 [ RUN      ] SofieAlpakaTest.LinearWithSigmoid
 [       OK ] SofieAlpakaTest.LinearWithSigmoid (2 ms)
 [ RUN      ] SofieAlpakaTest.Tanh
@@ -143,8 +155,10 @@ yet have alpaka test integration.
 [       OK ] SofieAlpakaTest.Elu (1 ms)
 [ RUN      ] SofieAlpakaTest.Softmax1d
 [       OK ] SofieAlpakaTest.Softmax1d (1 ms)
-[----------] 8 tests from SofieAlpakaTest (935 ms total)
-[  PASSED  ] 8 tests.
+[ RUN      ] SofieAlpakaTest.LinearWithSelu
+[       OK ] SofieAlpakaTest.LinearWithSelu (2 ms)
+[----------] 9 tests from SofieAlpakaTest (865 ms total)
+[  PASSED  ] 9 tests.
 ```
 
 ### How to Build and Test
