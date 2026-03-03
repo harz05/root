@@ -1,14 +1,12 @@
-#ifndef TMVA_SOFIE_ROPERATOR_Elu
-#define TMVA_SOFIE_ROPERATOR_Elu
+#ifndef SOFIE_ROPERATOR_Elu
+#define SOFIE_ROPERATOR_Elu
 
-#include "TMVA/SOFIE_common.hxx"
-#include "TMVA/ROperator.hxx"
-#include "TMVA/RModel.hxx"
+#include "SOFIE/SOFIE_common.hxx"
+#include "SOFIE/ROperator.hxx"
+#include "SOFIE/RModel.hxx"
 
 #include <sstream>
 
-namespace TMVA{
-namespace Experimental{
 namespace SOFIE{
 
 template <typename T>
@@ -75,11 +73,51 @@ public:
       return out.str();
    }
 
+   std::string Generate_GPU_Kernel_ALPAKA(std::string /*opName*/) override {
+      std::string op;
+      op =  "\n//------ ELU_KERNEL_ALPAKA\n";
+      op += "struct EluKernel {\n";
+      op += SP + "template<typename TAcc, typename T>\n";
+      op += SP + "ALPAKA_FN_ACC void operator()(TAcc const & acc, T const* __restrict__ data, T* __restrict__ out, std::size_t numElements, T alpha) const {\n";
+      op += SP + SP + "const auto idx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      op += SP + SP + "if (idx < numElements) {\n";
+      op += SP + SP + SP + "out[idx] = (data[idx] >= static_cast<T>(0)) ? data[idx] : alpha * (exp(data[idx]) - static_cast<T>(1));\n";
+      op += SP + SP + "}\n";
+      op += SP + "}\n";
+      op += "};\n";
+      return op;
+   }
+
+   std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string /*opName*/) override {
+      return SP + "EluKernel eluKernel;\n";
+   }
+
+   std::string Generate_GPU_ALPAKA(std::string OpName) override {
+      OpName = "op_" + OpName;
+      if (fShape.empty()) {
+         throw std::runtime_error("TMVA SOFIE Elu operator called to Generate_GPU_ALPAKA without being initialized first");
+      }
+      std::stringstream out;
+      auto length = ConvertShapeToLength(fShape);
+      // alpha is baked into the generated code at model-parse time
+      std::string alphaStr = std::to_string(falpha) + "f";
+      out << "\n//------ ELU_GPU_ALPAKA\n";
+      out << SP << "auto const elementsPerThread_" << fNX << " = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << "auto const elementsPerGrid_" << fNX << " = Vec::all(Idx{" << length << "});\n";
+      out << SP << "alpaka::KernelCfg<Acc> const kernelCfg_" << fNX << " = {elementsPerGrid_" << fNX << ", elementsPerThread_" << fNX << "};\n";
+      out << SP << "auto const workDiv_" << fNX << " = alpaka::getValidWorkDiv(kernelCfg_" << fNX << ", devAcc, eluKernel, "
+          << "alpaka::getPtrNative(deviceBuf_" << fNX << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << length << "), static_cast<" << fType << ">(" << alphaStr << "));\n";
+      out << SP << "alpaka::exec<Acc>(queue, workDiv_" << fNX << ", eluKernel, "
+          << "alpaka::getPtrNative(deviceBuf_" << fNX << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << length << "), static_cast<" << fType << ">(" << alphaStr << "));\n";
+      return out.str();
+   }
+
 };
 
 }//SOFIE
-}//Experimental
-}//TMVA
 
 
-#endif //TMVA_SOFIE_ROPERATOR_Elu
+
+#endif //SOFIE_ROPERATOR_Elu

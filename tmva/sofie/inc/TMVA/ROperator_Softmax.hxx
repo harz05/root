@@ -1,35 +1,30 @@
-#ifndef TMVA_SOFIE_ROPERATOR_Softmax
-#define TMVA_SOFIE_ROPERATOR_Softmax
+#ifndef SOFIE_ROPERATOR_Softmax
+#define SOFIE_ROPERATOR_Softmax
 
-#include "TMVA/SOFIE_common.hxx"
-#include "TMVA/ROperator.hxx"
-#include "TMVA/RModel.hxx"
+#include "SOFIE/SOFIE_common.hxx"
+#include "SOFIE/ROperator.hxx"
+#include "SOFIE/RModel.hxx"
 
 #include <sstream>
 
-namespace TMVA {
-namespace Experimental {
 namespace SOFIE {
 
-// implement Softmax and LogSoftmax
+template <typename T>
 class ROperator_Softmax final : public ROperator {
 
 private:
-   bool fLogSoftmax;  // for the logsoftmax case
    int64_t fAttrAxis;
 
    std::string fNX;
    std::string fNY;
-   std::vector<Dim> fShape;
+   std::vector<size_t> fShape;
 
    std::string fType;
 
 public:
    ROperator_Softmax() {}
-   ROperator_Softmax(int64_t attr_axis, std::string nameX, std::string nameY, bool logSoftmax = false)
-      : fLogSoftmax(logSoftmax),
-      fAttrAxis(attr_axis), fNX(UTILITY::Clean_name(nameX)), fNY(UTILITY::Clean_name(nameY))
-
+   ROperator_Softmax(int64_t attr_axis, std::string nameX, std::string nameY)
+      : fAttrAxis(attr_axis), fNX(UTILITY::Clean_name(nameX)), fNY(UTILITY::Clean_name(nameY))
    {
          fInputTensorNames = { fNX };
          fOutputTensorNames = { fNY };
@@ -47,7 +42,7 @@ public:
           false) { // input must be a graph input, or already initialized intermediate tensor
          throw std::runtime_error("TMVA SOFIE Softmax Op Input Tensor is not found in model");
       }
-      fShape = model.GetDimTensorShape(fNX);
+      fShape = model.GetTensorShape(fNX);
       model.AddIntermediateTensor(fNY, model.GetTensorType(fNX), fShape);
       fType = ConvertTypeToString(model.GetTensorType(fNX));
       if (model.Verbose()) {
@@ -62,123 +57,203 @@ public:
       }
       std::stringstream out;
       size_t size = fShape.size();
-      auto length_str = ConvertDimShapeToLength(fShape);
+      size_t length = ConvertShapeToLength(fShape);
       size_t axis = fAttrAxis < 0 ? size + fAttrAxis : fAttrAxis;
-
-      // Check if this is the special case where memory is contiguous.
-      if (axis == size - 1) {
-         std::string axis_size = fShape[axis].GetVal();
-         std::string num_rows;
-         if (IsInteger(length_str) && IsInteger(axis_size)) {
-            num_rows = std::to_string(std::stoul(length_str) / std::stoul(axis_size));
-         } else {
-            num_rows = "(" + length_str + ") / (" + axis_size + ")";
-         }
-
-         out << "\n" << SP << "//------ SOFTMAX - " << size << "  " << length_str << "  " << axis << "\n";
-         out << SP << "for (int i = 0; i < " << num_rows << "; ++i) {\n";
-         out << SP << SP << "size_t offset = i * " << axis_size << ";\n";
-         out << SP << SP << fType << " const * x_ptr = &tensor_" << fNX << "[offset];\n";
-         out << SP << SP << fType << " * y_ptr = &tensor_" << fNY << "[offset];\n";
-
-         out << SP << SP << fType << " vmax = x_ptr[0];\n";
-         out << SP << SP << "for (int j = 1; j < " << axis_size << "; ++j) {\n";
-         out << SP << SP << SP << "if (x_ptr[j] > vmax) vmax = x_ptr[j];\n";
-         out << SP << SP << "}\n";
-
-         out << SP << SP << fType << " sum = 0.0;\n";
-         out << SP << SP << "for (int j = 0; j < " << axis_size << "; ++j) {\n";
-         out << SP << SP << SP << "y_ptr[j] = std::exp(x_ptr[j] - vmax);\n";
-         out << SP << SP << SP << "sum += y_ptr[j];\n";
-         out << SP << SP << "}\n";
-
-         out << SP << SP << fType << " inv_sum = 1.0f / sum;\n";
-         out << SP << SP << "for (int j = 0; j < " << axis_size << "; ++j) {\n";
-         out << SP << SP << SP << "y_ptr[j] *= inv_sum;\n";
-         if (fLogSoftmax)
-            out << SP << SP << SP << "y_ptr[j] = std::log(y_ptr[j]);\n";
-         out << SP << SP << "}\n";
+      out << "\n" << SP << "//------ SOFTMAX - " << size << "  " << length << "  " << axis << "\n";
+      // use safe numerically implementation by subtracting max of tensor
+      if (size == 1) {
+         out << SP << fType << " vmax = tensor_" << fNX << "[0];\n";
+         out << SP << "for (size_t i = 1; i < " << length << " ; i++){\n";
+         out << SP << SP << "if (tensor_" << fNX << "[i] > vmax) vmax = tensor_" << fNX << "[i];\n";
          out << SP << "}\n";
-
+         out << SP << fType << " sum = 0.0;\n";
+         out << SP << "for (size_t i = 0; i < " << length << " ; i++){\n";
+         out << SP << SP << "tensor_" << fNY << "[i] = std::exp(tensor_" << fNX << "[i] - vmax);\n";
+         out << SP << SP << "sum += tensor_" << fNY << "[i];\n";
+         out << SP << "}\n";
+         out << SP << "for (size_t i = 0; i < " << length << " ; i++){\n";
+         out << SP << SP << "tensor_" << fNY << "[i] /= sum;\n";
+         out << SP << "}\n";
       } else {
-         auto stride = UTILITY::ComputeStrideFromShape(fShape);
-         size_t k = 0;
-         std::vector<std::string> l(size);
-         for (size_t i = 0; i < size; i++) {
-            if (i != axis) {
-               for (size_t j = 0; j < k; j++) out << SP;
-               l[i] = std::string("i") + std::to_string(i);
-               out << "for (int " << l[i] << " = 0; " << l[i] << " < " << fShape[i] << "; " << l[i] << "++) {\n";
-               k++;
-            }
+         size_t batch = fShape[0];
+         size_t channel = fShape[1];
+         size_t width = (size > 2) ? fShape[size - 1] : 1;
+         size_t height = (size > 3) ? fShape[size - 2] : 1;
+         size_t depth = (size > 4) ? fShape[size - 3] : 1;
+         size_t hStride = width;
+         size_t dStride = height * width;
+         size_t cStride = depth * dStride;
+         size_t bStride = channel * cStride;
+
+         size_t N = 0; // Size of the axis
+         size_t iStride = 0;
+         if (axis == 0) {
+            N = batch;
+            iStride = bStride;
+         } else if (axis == 1) {
+            N = channel;
+            iStride = cStride;
+         } else if (axis == size - 1) {
+            N = width;
+            iStride = 1;
+         } else if (size > 3 && axis == size - 2) {
+            N = height;
+            iStride = hStride;
+         } else if (size == 5 && axis == size - 3) {
+            N = depth;
+            iStride = dStride;
+         } else {
+            throw
+               std::runtime_error("TMVA::SOFIE - Softmax operator along the axis "
+                  + std::to_string(fAttrAxis) + " with " + std::to_string(size)
+                  + "d input tensor not supported.");
          }
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << fType << " sum = 0.;\n";
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "size_t index = ";
-         bool first = true;
-         for (size_t i = 0; i < size; i++) {
-            if (i == axis) continue;
-            if (!first) out << " + ";
-            if (stride[i].GetVal() != "1")
-               out << stride[i] << "*";
-            out << l[i];
-            first = false;
+
+         bool notBatch = axis != 0;
+         bool notChannel = axis != 1;
+         bool notDepth = (size == 5 && axis != 2);
+         bool notHeight = (size == 5 && axis != 3) || (size == 4 && axis != 2);
+         bool notWidth = (size == 5 && axis != 4) || (size == 4 && axis != 3) || (size == 3 && axis != 2);
+
+         if (notBatch) {
+            out << SP << "for (size_t n = 0; n < " << batch << " ; n++){\n";
+         }
+         if (notChannel) {
+            out << SP << SP << "for (size_t c = 0; c < " << channel << " ; c++){\n";
+         }
+         if (notDepth) {
+            out << SP << SP << "for (size_t d = 0; d < " << depth << " ; d++){\n";
+         }
+         if (notHeight) {
+            out << SP << SP << "for (size_t h = 0; h < " << height << " ; h++){\n";
+         }
+         if (notWidth) {
+            out << SP << SP << "for (size_t w = 0; w < " << width << " ; w++){\n";
+         }
+         out << SP << SP << SP << fType << " sum = 0.;\n";
+         out << SP << SP << SP << "size_t index = 0";
+         if (notBatch) {
+            out << " + n * " << bStride;
+         }
+         if (notChannel) {
+            out << "+ c * " << cStride;
+         }
+         if (notDepth) {
+            out << " + d * " << dStride;
+         }
+         if (notHeight) {
+            out << " + h * " << hStride;
+         }
+         if (notWidth) {
+            out << " + w";
          }
          out << ";\n";
-         // find maximum looping along reduced axis
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << fType << " vmax = tensor_" << fNX << "[index];\n";
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "for (int i = 1; i < " << fShape[axis] << "; i++) {\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << fType << " x = tensor_" << fNX << "[index + i";
-         if (stride[axis].GetVal() != "1") out << "*(" << stride[axis] << ")";
-         out << "];\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "if (x > vmax) vmax = x;\n";
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "}\n";
-         // compute softmax
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "for (int i = 0; i < " << fShape[axis] << "; i++) {\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "size_t id = index + i";
-         if (stride[axis].GetVal() != "1") out << "*(" << stride[axis] << ")";
-         out << ";\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "tensor_" << fNY << "[id] = std::exp(tensor_" << fNX << "[id] - vmax);\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "sum += tensor_" << fNY << "[id];\n";
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "}\n";
-         // normalize
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "for (int i = 0; i < " << fShape[axis] << "; i++) {\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "size_t id = index + i";
-         if (stride[axis].GetVal() != "1") out << "*(" << stride[axis] << ");\n";
-         for (size_t j = 0; j < size; j++) out << SP;
-         out << "tensor_" << fNY << "[id] /= sum;\n";
-         if (fLogSoftmax) {
-            for (size_t j = 0; j < size; j++) out << SP;
-            out << "tensor_" << fNY << "[id] = std::log(tensor_" << fNY << "[id]);\n";
+         // apply softmax along the axis - find first maximum value for numerical stability
+         if (N == 0)
+            throw std::runtime_error("TMVA::SOFIE - Softmax operator is along axis with zero elements");
+         out << SP << SP << SP << fType << " vmax = tensor_" << fNX << "[index];\n";
+         out << SP << SP << SP << "for (size_t i = 1; i < " << N << "; i++) {\n";
+         out << SP << SP << SP << SP << "if (tensor_" << fNX << "[index + i*" << iStride << "] > vmax)\n";
+         out << SP << SP << SP << SP << SP << "vmax = tensor_" << fNX << "[index + i*" << iStride << "];\n";
+         out << SP << SP << SP << "}\n";
+         out << SP << SP << SP << "for (size_t i = 0; i < " << N << "; i++) {\n";
+         out << SP << SP << SP << SP << "tensor_" << fNY << "[index + i*" << iStride << "] = std::exp(tensor_" << fNX
+             << "[index + i*" << iStride << "] - vmax);\n";
+         out << SP << SP << SP << SP << "sum += tensor_" << fNY << "[index + i*" << iStride << "];\n";
+         out << SP << SP << SP << "}\n";
+         out << SP << SP << SP << "for (size_t i = 0; i < " << N << "; i++) {\n";
+         out << SP << SP << SP << SP << "tensor_" << fNY << "[index + i*" << iStride << "] /= sum;\n";
+         out << SP << SP << SP << "}\n";
+         if (notWidth) {
+            out << SP << SP << "}\n"; // end w
          }
-         for (size_t j = 0; j < size-1; j++) out << SP;
-         out << "}\n";
-         //end loops
-         for (int i = static_cast<int>(k) - 1; i >= 0; i--) {
-            for (int j = 0; j < i; j++) out << SP;
-            out << "}\n";
+         if (notHeight) {
+            out << SP << SP << "}\n"; // end h
+         }
+         if (notDepth) {
+            out << SP << SP << "}\n"; // end d
+         }
+         if (notChannel) {
+            out << SP << SP << "}\n"; // end c
+         }
+         if (notBatch) {
+            out << SP << "}\n"; // end n
          }
       }
       return out.str();
    }
-   std::vector<std::string> GetStdLibs() override { return { std::string("cmath") }; }
+   std::string Generate_GPU_Kernel_ALPAKA(std::string /*opName*/) override {
+      std::string op;
+      op =  "\n//------ SOFTMAX_KERNEL_ALPAKA\n";
+      op += "// One thread per row: each thread computes softmax over rowSize elements.\n";
+      op += "// Numerically stable: subtracts row max before exponentiation.\n";
+      op += "struct SoftmaxKernel {\n";
+      op += SP + "template<typename TAcc, typename T>\n";
+      op += SP + "ALPAKA_FN_ACC void operator()(TAcc const & acc, T const* __restrict__ data, T* __restrict__ out,\n";
+      op += SP + SP + "                           std::size_t numRows, std::size_t rowSize) const {\n";
+      op += SP + SP + "const auto row = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      op += SP + SP + "if (row < numRows) {\n";
+      op += SP + SP + SP + "const T* rowData = data + row * rowSize;\n";
+      op += SP + SP + SP + "T* rowOut = out + row * rowSize;\n";
+      op += SP + SP + SP + "// Find max for numerical stability\n";
+      op += SP + SP + SP + "T vmax = rowData[0];\n";
+      op += SP + SP + SP + "for (std::size_t i = 1; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "if (rowData[i] > vmax) vmax = rowData[i];\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + SP + "// Compute exp(x - max) and accumulate sum\n";
+      op += SP + SP + SP + "T sum = static_cast<T>(0);\n";
+      op += SP + SP + SP + "for (std::size_t i = 0; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "rowOut[i] = exp(rowData[i] - vmax);\n";
+      op += SP + SP + SP + SP + "sum += rowOut[i];\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + SP + "// Normalize\n";
+      op += SP + SP + SP + "for (std::size_t i = 0; i < rowSize; ++i) {\n";
+      op += SP + SP + SP + SP + "rowOut[i] /= sum;\n";
+      op += SP + SP + SP + "}\n";
+      op += SP + SP + "}\n";
+      op += SP + "}\n";
+      op += "};\n";
+      return op;
+   }
+
+   std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string /*opName*/) override {
+      return SP + "SoftmaxKernel softmaxKernel;\n";
+   }
+
+   std::string Generate_GPU_ALPAKA(std::string OpName) override {
+      OpName = "op_" + OpName;
+      if (fShape.empty()) {
+         throw std::runtime_error("TMVA SOFIE Softmax operator called to Generate_GPU_ALPAKA without being initialized first");
+      }
+      std::stringstream out;
+      size_t size   = fShape.size();
+      size_t length = ConvertShapeToLength(fShape);
+      size_t axis   = (fAttrAxis < 0) ? size + fAttrAxis : (size_t)fAttrAxis;
+
+      // Decompose shape into (numRows, rowSize) along the softmax axis.
+      // rowSize  = size of the axis dimension
+      // numRows  = total elements / rowSize
+      size_t rowSize = fShape[axis];
+      size_t numRows = length / rowSize;
+
+      out << "\n//------ SOFTMAX_GPU_ALPAKA  axis=" << axis << "  numRows=" << numRows << "  rowSize=" << rowSize << "\n";
+      out << SP << "auto const elementsPerThread_" << fNX << " = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << "auto const elementsPerGrid_"   << fNX << " = Vec::all(Idx{" << numRows << "});\n";
+      out << SP << "alpaka::KernelCfg<Acc> const kernelCfg_" << fNX
+          << " = {elementsPerGrid_" << fNX << ", elementsPerThread_" << fNX << "};\n";
+      out << SP << "auto const workDiv_" << fNX << " = alpaka::getValidWorkDiv(kernelCfg_" << fNX
+          << ", devAcc, softmaxKernel, alpaka::getPtrNative(deviceBuf_" << fNX
+          << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << numRows << "), static_cast<Idx>(" << rowSize << "));\n";
+      out << SP << "alpaka::exec<Acc>(queue, workDiv_" << fNX << ", softmaxKernel, "
+          << "alpaka::getPtrNative(deviceBuf_" << fNX
+          << "), alpaka::getPtrNative(deviceBuf_" << fNY
+          << "), static_cast<Idx>(" << numRows << "), static_cast<Idx>(" << rowSize << "));\n";
+      return out.str();
+   }
+
 };
 
 } // namespace SOFIE
-} // namespace Experimental
-} // namespace TMVA
 
-#endif // TMVA_SOFIE_ROPERATOR_Softmax
+#endif // SOFIE_ROPERATOR_Softmax
