@@ -215,6 +215,7 @@ Key technical details:
 
 - `SofieAlpakaTest.ConvWithPadding` - Conv2D with 1 input channel, 1 output channel, 3x3 kernel, padding=[1,1,1,1], input shape [1,1,5,5] with values 0-24, verified against CPU reference output with tolerance 1e-3.
 
+##### A Google Colab notebook for running the tests on a free T4 GPU is included in the SOFIE fork: `SOFIE_Alpaka_Test.ipynb` It contains the cell with test results done for Exercise 5.
 ---
 
 ## Repository Links
