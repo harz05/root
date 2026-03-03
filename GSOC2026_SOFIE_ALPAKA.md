@@ -1,8 +1,8 @@
 # GSoC 2026 - ML Inference on Heterogeneous Architectures using SOFIE
 
-**Candidate:** Harsh Chauhan
-**Mentors:** Lorenzo Moneta, Sanjiban Sengupta
-**Branch:** sofie-alpaka-gsoc26
+**Candidate:** Harsh Chauhan  
+**Mentors:** Lorenzo Moneta, Sanjiban Sengupta  
+**Branch:** sofie-alpaka-gsoc26  
 
 ---
 
