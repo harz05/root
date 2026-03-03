@@ -613,6 +613,186 @@ public:
       return out.str();
       }
 
+   // -------------------------------------------------------------------------
+   // Alpaka GPU implementation (2D convolution, group=1)
+   // Strategy: im2col (GPU kernel) + GEMM (sofieBLAS) + bias add (GPU kernel)
+   // Supports arbitrary padding, strides, and dilations.
+   // Batch > 1 and group convolution are not yet supported in the GPU path.
+   // -------------------------------------------------------------------------
+
+   std::string Generate_GPU_Kernel_ALPAKA(std::string /*opName*/) override {
+      std::stringstream out;
+
+      // Im2col kernel: one thread per element of the column matrix.
+      // The column matrix has shape (iC*kH*kW, oH*oW).
+      // Each thread maps its flat index to (ic, kh, kw, oh, ow) and reads the
+      // corresponding input pixel, inserting 0 for out-of-bounds (zero padding).
+      out << "struct Im2colKernel {\n";
+      out << "  template<typename TAcc>\n";
+      out << "  ALPAKA_FN_ACC void operator()(TAcc const & acc,\n";
+      out << "      float const* input, float* col,\n";
+      out << "      int iC, int iH, int iW,\n";
+      out << "      int kH, int kW,\n";
+      out << "      int padH, int padW,\n";
+      out << "      int strideH, int strideW,\n";
+      out << "      int dilH, int dilW,\n";
+      out << "      int oH, int oW) const {\n";
+      out << "    const auto idx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      out << "    if (idx >= static_cast<size_t>(iC * kH * kW * oH * oW)) return;\n";
+      out << "    int tmp = static_cast<int>(idx);\n";
+      out << "    const int ow = tmp % oW; tmp /= oW;\n";
+      out << "    const int oh = tmp % oH; tmp /= oH;\n";
+      out << "    const int kw = tmp % kW; tmp /= kW;\n";
+      out << "    const int kh = tmp % kH; tmp /= kH;\n";
+      out << "    const int ic = tmp;\n";
+      out << "    const int ih = oh * strideH - padH + kh * dilH;\n";
+      out << "    const int iw = ow * strideW - padW + kw * dilW;\n";
+      out << "    const int col_idx = (oh * oW + ow) * (iC * kH * kW) + (ic * kH + kh) * kW + kw;\n";
+      out << "    col[col_idx] = (ih >= 0 && ih < iH && iw >= 0 && iw < iW)\n";
+      out << "                   ? input[ic * iH * iW + ih * iW + iw] : 0.0f;\n";
+      out << "  }\n";
+      out << "};\n\n";
+
+      // Bias add kernel: one thread per output element, adds per-channel bias.
+      out << "struct ConvBiasKernel {\n";
+      out << "  template<typename TAcc>\n";
+      out << "  ALPAKA_FN_ACC void operator()(TAcc const & acc,\n";
+      out << "      float* output, float const* bias,\n";
+      out << "      int oC, int oSpatial) const {\n";
+      out << "    const auto idx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc)[0];\n";
+      out << "    if (idx < static_cast<size_t>(oC * oSpatial))\n";
+      out << "      output[idx] += bias[(idx / oSpatial) % oC];\n";
+      out << "  }\n";
+      out << "};\n";
+
+      return out.str();
+   }
+
+   std::string Generate_GPU_Kernel_Definitions_ALPAKA(std::string /*opName*/) override {
+      std::stringstream out;
+      out << "Im2colKernel im2colKernel;\n";
+      out << "ConvBiasKernel convBiasKernel;\n";
+      return out.str();
+   }
+
+   std::string Generate_GPU_ALPAKA(std::string opName) override {
+      opName = "op_" + opName;
+
+      if (fShapeX.empty() || fShapeW.empty() || fShapeY.empty())
+         throw std::runtime_error(
+            "TMVA SOFIE Conv GPU Op called to Generate without being initialized first");
+      if (fDim != 2)
+         throw std::runtime_error(
+            "TMVA SOFIE Conv GPU alpaka: only 2D convolution is currently supported");
+
+      std::stringstream out;
+      out << "\n//----  Conv GPU ALPAKA " << opName << "\n";
+
+      const size_t iC      = fShapeX[1].dim;
+      const size_t iH      = fShapeX[2].dim;
+      const size_t iW      = fShapeX[3].dim;
+      const size_t oC      = fShapeY[1].dim;
+      const size_t oH      = fShapeY[2].dim;
+      const size_t oW      = fShapeY[3].dim;
+      const size_t kH      = fAttrKernelShape[0];
+      const size_t kW      = fAttrKernelShape[1];
+      const size_t padH    = fAttrPads[0];
+      const size_t padW    = fAttrPads[1];
+      const size_t strideH = fAttrStrides[0];
+      const size_t strideW = fAttrStrides[1];
+      const size_t dilH    = fAttrDilations[0];
+      const size_t dilW    = fAttrDilations[1];
+      const size_t xcol_n  = iC * kH * kW * oH * oW;
+
+      // Allocate device buffer for im2col output: shape (iC*kH*kW, oH*oW)
+      out << SP << "auto deviceBuf_" << opName << "_xcol = "
+          << "alpaka::allocBuf<float, Idx>(devAcc, Ext1D::all(Idx{" << xcol_n << "}));\n";
+
+      // ---- Im2col kernel launch ----
+      out << SP << "{\n";
+      out << SP << SP << "auto const ept = Vec::all(static_cast<Idx>(1));\n";
+      out << SP << SP << "auto const epg = Vec::all(Idx{" << xcol_n << "});\n";
+      out << SP << SP << "alpaka::KernelCfg<Acc> const cfg = {epg, ept};\n";
+      out << SP << SP << "float const* xptr = alpaka::getPtrNative(deviceBuf_" << fNX << ");\n";
+      out << SP << SP << "float* cptr = alpaka::getPtrNative(deviceBuf_" << opName << "_xcol);\n";
+      out << SP << SP << "auto wdiv = alpaka::getValidWorkDiv(cfg, devAcc, im2colKernel,\n";
+      out << SP << SP << SP << "xptr, cptr,\n";
+      out << SP << SP << SP
+          << "(int)" << iC      << ",(int)" << iH      << ",(int)" << iW      << ","
+          << "(int)" << kH      << ",(int)" << kW      << ","
+          << "(int)" << padH    << ",(int)" << padW    << ","
+          << "(int)" << strideH << ",(int)" << strideW << ","
+          << "(int)" << dilH    << ",(int)" << dilW    << ","
+          << "(int)" << oH      << ",(int)" << oW      << ");\n";
+      out << SP << SP << "alpaka::exec<Acc>(queue, wdiv, im2colKernel,\n";
+      out << SP << SP << SP << "xptr, cptr,\n";
+      out << SP << SP << SP
+          << "(int)" << iC      << ",(int)" << iH      << ",(int)" << iW      << ","
+          << "(int)" << kH      << ",(int)" << kW      << ","
+          << "(int)" << padH    << ",(int)" << padW    << ","
+          << "(int)" << strideH << ",(int)" << strideW << ","
+          << "(int)" << dilH    << ",(int)" << dilW    << ","
+          << "(int)" << oH      << ",(int)" << oW      << ");\n";
+      out << SP << SP << "alpaka::wait(queue);\n";
+      out << SP << "}\n";
+
+      // ---- GEMM: W(oC x iC*kH*kW) * xcol(iC*kH*kW x oH*oW) = Y(oC x oH*oW) ----
+      // sofieBLAS stores A as (k x m) col-major. Im2col outputs (oH*oW, k) row-major
+      // whose col-major view is (k, oH*oW) = (k, m). Use transA='t' so op(A)=A^T=(m,k).
+      // Zero Y first: sofieBLAS epilogue always adds bias pointer (Y) to GEMM result.
+      out << SP << "alpaka::memset(queue, deviceBuf_" << fNY << ", 0);\n";
+      out << SP << "alpaka::wait(queue);\n";
+      out << SP << "char " << opName << "_tA = 'n';\n";
+      out << SP << "char " << opName << "_tB = 't';\n";
+      out << SP << "int  " << opName << "_m = " << oC          << ";\n";
+      out << SP << "int  " << opName << "_n = " << oH * oW     << ";\n";
+      out << SP << "int  " << opName << "_k = " << iC*kH*kW    << ";\n";
+      out << SP << "float " << opName << "_alpha = 1.0f;\n";
+      out << SP << "float " << opName << "_beta  = 0.0f;\n";
+      // beta=0 so C buffer is not read; pass Y as C placeholder
+      out << SP << "blas.gemm(" << opName << "_tB, " << opName << "_tA, "
+          << opName << "_n, " << opName << "_m, " << opName << "_k, "
+          << opName << "_alpha, "
+          << "deviceBuf_" << opName << "_xcol, "
+          << "deviceBuf_" << fNW << ", "
+          << opName << "_beta, "
+          << "deviceBuf_" << fNY << ", "
+          << "deviceBuf_" << fNY << ");\n";
+
+      // ---- Bias add ----
+      if (fNB != "") {
+         const size_t oSpatial  = oH * oW;
+         const size_t total_out = oC * oSpatial;
+         out << SP << "{\n";
+         out << SP << SP << "auto const ept2 = Vec::all(static_cast<Idx>(1));\n";
+         out << SP << SP << "auto const epg2 = Vec::all(Idx{" << total_out << "});\n";
+         out << SP << SP << "alpaka::KernelCfg<Acc> const cfg2 = {epg2, ept2};\n";
+         out << SP << SP << "auto wdiv2 = alpaka::getValidWorkDiv(cfg2, devAcc, convBiasKernel,\n";
+         out << SP << SP << SP
+             << "alpaka::getPtrNative(deviceBuf_" << fNY  << "), "
+             << "alpaka::getPtrNative(deviceBuf_" << fNB << "), "
+             << "(int)" << oC << ", (int)" << oSpatial << ");\n";
+         out << SP << SP << "alpaka::exec<Acc>(queue, wdiv2, convBiasKernel,\n";
+         out << SP << SP << SP
+             << "alpaka::getPtrNative(deviceBuf_" << fNY  << "), "
+             << "alpaka::getPtrNative(deviceBuf_" << fNB << "), "
+             << "(int)" << oC << ", (int)" << oSpatial << ");\n";
+         out << SP << SP << "alpaka::wait(queue);\n";
+         out << SP << "}\n";
+      }
+
+      return out.str();
+   }
+
+   std::string GetBlasConfig() override {
+      if (fShapeX.empty() || fShapeW.empty() || fShapeY.empty()) return "";
+      if (fDim != 2) return "";
+      size_t oH = fShapeY[2].dim, oW = fShapeY[3].dim, oC = fShapeY[1].dim;
+      size_t iC = fShapeX[1].dim;
+      size_t kH = fAttrKernelShape[0], kW = fAttrKernelShape[1];
+      return std::to_string(oH*oW) + ", " + std::to_string(oC) + ", " + std::to_string(iC*kH*kW);
+   }
+
    /*! \brief Returns the blas routines needed to compile the generated code
     */
    std::vector<std::string> GetBlasRoutines() override { return { std::string("Gemm"), std::string("Axpy") }; }
