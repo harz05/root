@@ -1,3 +1,5 @@
+#include "LinearWithSelu_FromONNX_GPU_ALPAKA.hxx"
+#include "input_models/references/LinearWithSelu.ref.hxx"
 //test functions from line 255
 //newly added-
 #include "Tanh_FromONNX_GPU_ALPAKA.hxx"
@@ -363,6 +365,41 @@ TEST_F(SofieAlpakaTest, Softmax1d)
    float *correct = Softmax1d_ExpectedOutput::output;
 
    for (size_t i = 0; i < INPUT_SIZE; ++i) {
+      EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE)
+         << "Mismatch at index " << i
+         << ": got " << res_ptr[i] << ", expected " << correct[i];
+   }
+}
+
+TEST_F(SofieAlpakaTest, LinearWithSelu)
+{
+   constexpr float TOLERANCE = DEFAULT_TOLERANCE;
+   constexpr size_t INPUT_SIZE  = 48;
+   constexpr size_t OUTPUT_SIZE = 24;
+
+   auto A = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{INPUT_SIZE}));
+   float *A_ptr = reinterpret_cast<float*>(alpaka::getPtrNative(A));
+   for (Idx i = 0; i < INPUT_SIZE; ++i) A_ptr[i] = 1.0f;
+
+   auto A_d = alpaka::allocBuf<float, Idx>(device, Ext1D::all(Idx{INPUT_SIZE}));
+   alpaka::memcpy(queue, A_d, A);
+   alpaka::wait(queue);
+
+   auto result_h = alpaka::allocBuf<float, Idx>(host, Ext1D::all(Idx{OUTPUT_SIZE}));
+
+   {
+      SOFIE_LinearWithSelu::Session<alpaka::TagGpuCudaRt> session("LinearWithSelu_FromONNX_GPU_ALPAKA.dat");
+      auto result = session.infer(A_d);
+      alpaka::wait(queue);
+      cudaDeviceSynchronize();
+      alpaka::memcpy(queue, result_h, result);
+      alpaka::wait(queue);
+   }
+
+   float *res_ptr = reinterpret_cast<float*>(alpaka::getPtrNative(result_h));
+   float *correct = LinearWithSelu_ExpectedOutput::all_ones;
+
+   for (size_t i = 0; i < OUTPUT_SIZE; ++i) {
       EXPECT_LE(std::abs(res_ptr[i] - correct[i]), TOLERANCE)
          << "Mismatch at index " << i
          << ": got " << res_ptr[i] << ", expected " << correct[i];
