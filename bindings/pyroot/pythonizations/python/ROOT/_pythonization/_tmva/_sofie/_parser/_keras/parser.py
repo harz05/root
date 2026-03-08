@@ -20,6 +20,8 @@ from .layers.sigmoid import MakeKerasSigmoid
 from .layers.softmax import MakeKerasSoftmax
 from .layers.swish import MakeKerasSwish
 from .layers.tanh import MakeKerasTanh
+from .layers.rnn import MakeKerasRNN
+from .layers.conv_transpose import MakeKerasConvTranspose
 
 
 def MakeKerasActivation(layer):
@@ -63,12 +65,16 @@ mapKerasLayer = {
     "MaxPooling2D": MakeKerasPooling,
     "AveragePooling2D": MakeKerasPooling,
     "GlobalAveragePooling2D": MakeKerasPooling,
-    #  "SimpleRNN": MakeKerasRNN,
-    #  "GRU": MakeKerasRNN,
-    #  "LSTM": MakeKerasRNN,
+    "SimpleRNN": MakeKerasRNN,
+    "GRU": MakeKerasRNN,
+    "LSTM": MakeKerasRNN,
 }
 
-mapKerasLayerWithActivation = {"Dense": MakeKerasDense, "Conv2D": MakeKerasConv}
+mapKerasLayerWithActivation = {
+    "Dense": MakeKerasDense,
+    "Conv2D": MakeKerasConv,
+    "Conv2DTranspose": MakeKerasConvTranspose,
+}
 
 
 def add_layer_into_RModel(rmodel, layer_data):
@@ -223,10 +229,9 @@ def add_layer_into_RModel(rmodel, layer_data):
             inputs = layer_data["layerInput"]
             fActivationLayerOutput = outputs[0]
 
-            # like pooling, convolutional layer from keras requires transpose before and after to match
-            # the onnx format
-            # if the data format is channels last (can be set to channels first by the user).
-            if fLayerType == "Conv2D":
+            # Conv2D and Conv2DTranspose in Keras default to channels_last (NHWC) but ONNX
+            # uses channels_first (NCHW), so transpose input before and output after the op.
+            if fLayerType in ("Conv2D", "Conv2DTranspose"):
                 if layer_data["channels_last"]:
                     op = SOFIE.ROperator_Transpose("float")([0, 3, 1, 2], inputs[0], LayerName + "PreTrans")
                     rmodel.AddOperatorReference(op)
@@ -237,7 +242,7 @@ def add_layer_into_RModel(rmodel, layer_data):
             op = mapKerasLayerWithActivation[fLayerType](layer_data)
             rmodel.AddOperatorReference(op)
             Activation_layer_input = LayerName + fLayerType
-            if fLayerType == "Conv2D":
+            if fLayerType in ("Conv2D", "Conv2DTranspose"):
                 if layer_data["channels_last"]:
                     op = SOFIE.ROperator_Transpose("float")(
                         [0, 2, 3, 1], LayerName + fLayerType, LayerName + "PostTrans"
@@ -253,8 +258,8 @@ def add_layer_into_RModel(rmodel, layer_data):
 
             rmodel.AddOperatorReference(mapKerasLayer[LayerActivation](layer_data))
 
-        else:  # if layer is conv and the activation is linear, we need to add transpose before and after
-            if fLayerType == "Conv2D":
+        else:  # linear activation: still need transpose for channels_last conv layers
+            if fLayerType in ("Conv2D", "Conv2DTranspose"):
                 inputs = layer_data["layerInput"]
                 outputs = layer_data["layerOutput"]
                 fLayerOutput = outputs[0]
@@ -265,7 +270,7 @@ def add_layer_into_RModel(rmodel, layer_data):
                     layer_data["layerInput"] = inputs
                     outputs[0] = LayerName + "PostTrans"
             rmodel.AddOperatorReference(mapKerasLayerWithActivation[fLayerType](layer_data))
-            if fLayerType == "Conv2D":
+            if fLayerType in ("Conv2D", "Conv2DTranspose"):
                 if layer_data["channels_last"]:
                     op = SOFIE.ROperator_Transpose("float")([0, 2, 3, 1], LayerName + "PostTrans", fLayerOutput)
                     rmodel.AddOperatorReference(op)
@@ -386,7 +391,7 @@ class PyKeras:
                 layer_data["layerWeight"] = []
 
             # for convolutional and pooling layers we need to know the format of the data
-            if layer_data["layerType"] in ["Conv2D", "MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"]:
+            if layer_data["layerType"] in ["Conv2D", "Conv2DTranspose", "MaxPooling2D", "AveragePooling2D", "GlobalAveragePooling2D"]:
                 layer_data["channels_last"] = True if layer.data_format == "channels_last" else False
 
             # for recurrent type layers we need to extract additional unique information
@@ -416,7 +421,7 @@ class PyKeras:
                 rmodel.AddBlasRoutines({"Gemm", "Gemv"})
             elif fLayerType == "BatchNormalization":
                 rmodel.AddBlasRoutines({"Copy", "Axpy"})
-            elif fLayerType == "Conv1D" or fLayerType == "Conv2D" or fLayerType == "Conv3D":
+            elif fLayerType in ("Conv1D", "Conv2D", "Conv3D", "Conv2DTranspose"):
                 rmodel.AddBlasRoutines({"Gemm", "Axpy"})
             rmodel = add_layer_into_RModel(rmodel, layer_data)
 
@@ -444,24 +449,41 @@ class PyKeras:
             fWeightTensorSize = 1
             fWeightTensorShape = []
 
-            # IS IT BATCH SIZE? CHECK ONNX
-            if (
-                "simple_rnn" in fWeightName
-                or "lstm" in fWeightName
-                or ("gru" in fWeightName and "bias" not in fWeightName)
-            ):
-                fWeightTensorShape.append(1)
-
-            # Building the shape vector and finding the tensor size
-            for j in range(len(fWeightTensorValue.shape)):
-                fWeightTensorShape.append(fWeightTensorValue.shape[j])
-                fWeightTensorSize *= fWeightTensorValue.shape[j]
-
             if fWeightDType == SOFIE.ETensorType.FLOAT:
                 fWeightArray = fWeightTensorValue
 
+                # ----------------------------------------------------------------
+                # GRU bias special case
+                # Keras GRU stores bias as [2, 3H] (reset_after=True, the default)
+                # or [3H] (reset_after=False).  ONNX GRU B expects [1, 6H] where
+                # the first 3H = input-gate biases (W) and next 3H = recurrent
+                # biases (R), both already in ZRH order (same as Keras).
+                # ----------------------------------------------------------------
+                if "gru" in fWeightName and "bias" in fWeightName:
+                    fData = fWeightArray.flatten()          # [6H] or [3H]
+                    if fWeightArray.ndim == 1:              # reset_after=False: only input bias
+                        fData = np.concatenate([fData, np.zeros_like(fData)])
+                    # fData is now [6H]; store as [1, 6H]
+                    fWeightTensorShape = [1, int(fData.shape[0])]
+                    rmodel.AddInitializedTensor["float"](fWeightName, fWeightTensorShape, fData)
+                    continue
+
+                # Prepend num_directions=1 for all other RNN/LSTM/GRU tensors
+                if (
+                    "simple_rnn" in fWeightName
+                    or "lstm" in fWeightName
+                    or "gru" in fWeightName
+                ):
+                    fWeightTensorShape.append(1)
+
+                # Build shape vector
+                for j in range(len(fWeightTensorValue.shape)):
+                    fWeightTensorShape.append(fWeightTensorValue.shape[j])
+                    fWeightTensorSize *= fWeightTensorValue.shape[j]
+
                 # weights conversion format between keras and onnx for lstm: the order of the different
                 # elements (input, output, forget, cell) inside the vector/matrix is different
+                # Keras LSTM gate order: IFCO  ->  ONNX gate order: IOFC
                 if "lstm" in fWeightName:
                     if "kernel" in fWeightName:
                         units = int(fWeightArray.shape[1] / 4)
@@ -471,7 +493,7 @@ class PyKeras:
                         fWeightArray[:, units : units * 2] = W_o
                         fWeightArray[:, units * 2 : units * 3] = W_f
                         fWeightArray[:, units * 3 :] = W_c
-                    else:  # bias
+                    else:  # bias: shape [4H], same IFCO -> IOFC reorder
                         units = int(fWeightArray.shape[0] / 4)
                         W_f = fWeightArray[units : units * 2].copy()
                         W_c = fWeightArray[units * 2 : units * 3].copy()
@@ -489,11 +511,12 @@ class PyKeras:
 
                     fData = fWeightArray.flatten()
 
-                    # the recurrent bias and the cell bias can be the same, in which case we need to add a
-                    # vector of zeros for the recurrent bias
-                    if "bias" in fWeightName and len(fData.shape) == 1:
+                    # For RNN/LSTM: Keras stores only one bias vector [gates*H]; ONNX needs
+                    # [1, 2*gates*H] = input-gate biases concatenated with recurrent biases.
+                    # Append a zero recurrent-bias vector.  (GRU bias is handled above.)
+                    if "bias" in fWeightName:
                         fWeightTensorShape[1] *= 2
-                        fRbias = fData.copy() * 0
+                        fRbias = np.zeros_like(fData)
                         fData = np.concatenate((fData, fRbias))
 
                 else:
