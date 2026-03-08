@@ -1,4 +1,4 @@
-# GSoC 2026 – SOFIE: Improving Keras and PyTorch Parsers
+# GSoC'26 Evaluation Task Submission – SOFIE: Improving Keras and PyTorch Parsers
 ## Exercises 1–5 – Harsh Chauhan
 
 ---
