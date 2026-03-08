@@ -335,6 +335,22 @@ Structural tests (shapes, attributes, tensor names) plus gate-reordering correct
 
 ---
 
+## Screenshots
+
+### Exercise 4 – PyTorch layer parser tests (all passing)
+
+![Exercise 4 test results](screenshots/ex4_pytorch_tests.png)
+
+### Exercise 4 – `parse_model()` demo output
+
+![Exercise 4 demo](screenshots/ex4_demo.png)
+
+### Exercise 5 – Keras parser tests (all passing)
+
+![Exercise 5 test results](screenshots/ex5_keras_tests.png)
+
+---
+
 ## References
 
 - [SOFIE source – `RModelParser_PyTorch.cxx`](tmva/sofie_parsers/src/RModelParser_PyTorch.cxx)
