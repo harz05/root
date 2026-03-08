@@ -339,15 +339,20 @@ Structural tests (shapes, attributes, tensor names) plus gate-reordering correct
 
 ### Exercise 4 – PyTorch layer parser tests (all passing)
 
-![Exercise 4 test results](screenshots/ex4_pytorch_tests.png)
+<img width="1850" height="1048" alt="Screenshot from 2026-03-09 02-28-30" src="https://github.com/user-attachments/assets/18bea61d-7c56-4a9d-854f-3dd1df737128" />
 
-### Exercise 4 – `parse_model()` demo output
+--------
 
-![Exercise 4 demo](screenshots/ex4_demo.png)
+<img width="1850" height="1048" alt="Screenshot from 2026-03-09 02-28-45" src="https://github.com/user-attachments/assets/7123e6d9-dbc1-4d5c-89ca-c0ed1659a998" />
+
 
 ### Exercise 5 – Keras parser tests (all passing)
 
-![Exercise 5 test results](screenshots/ex5_keras_tests.png)
+<img width="1850" height="978" alt="Screenshot from 2026-03-09 02-30-02" src="https://github.com/user-attachments/assets/1de449c8-eba2-4c35-8b86-d9a40fbbfe18" />
+
+---------
+
+<img width="1850" height="978" alt="Screenshot from 2026-03-09 02-30-38" src="https://github.com/user-attachments/assets/d225e1dd-8517-4886-be53-7b253f6c4fb7" />
 
 ---
 
