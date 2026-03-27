@@ -490,12 +490,10 @@ public:
                 //
                 << fShapeW[1] << "," << iHeight << "," << iWidth << ",";
             if (fDim == 1)
-               out << "1, " << fAttrKernelShape[0] << ",0," << fAttrPads[0] << ",1," << fAttrStrides[0] << ",1,"
-                   << fAttrDilations[0];
+               out << "1, " << fAttrKernelShape[0] << ",0," << fAttrPads[0] << ",1," << fAttrStrides[0] << ",1," << 1;
             else // dim ==2
                out << fAttrKernelShape[0] << "," << fAttrKernelShape[1] << "," << fAttrPads[0] << "," << fAttrPads[1]
-                   << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrDilations[0] << ","
-                   << fAttrDilations[1];
+                   << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << 1 << "," << 1;
             out << "," << "tensor_" <<fNX << "_xcol);\n\n ";
          } else {
             // 3d im2col
@@ -508,7 +506,7 @@ public:
                 << fAttrKernelShape[0] << "," << fAttrKernelShape[1] << "," << fAttrKernelShape[2] << ","
                 << fAttrPads[0] << "," << fAttrPads[1] << "," << fAttrPads[2] << ","
                 << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrStrides[2] << ","
-                << fAttrDilations[0] << "," << fAttrDilations[1] << "," << fAttrDilations[2] << ","
+                << 1 << "," << 1 << "," << 1 << ","
                 << "tensor_" << fNX << "_xcol);\n\n ";
          }
          // BLAS
@@ -548,12 +546,10 @@ public:
                 //
                 << fShapeW[1] << "," << iHeight << "," << iWidth << ",";
             if (fDim == 1)
-               out << "1, " << fAttrKernelShape[0] << ",0," << fAttrPads[0] << ",1," << fAttrStrides[0] << ",1,"
-                   << fAttrDilations[0];
+               out << "1, " << fAttrKernelShape[0] << ",0," << fAttrPads[0] << ",1," << fAttrStrides[0] << ",1," << 1;
             else // dim ==2
                out << fAttrKernelShape[0] << "," << fAttrKernelShape[1] << "," << fAttrPads[0] << "," << fAttrPads[1]
-                   << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrDilations[0] << ","
-                   << fAttrDilations[1];
+                   << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << 1 << "," << 1;
             out << ", tensor_" << fNX << "_xcol);\n\n ";
          } else {
             // 3d im2col
@@ -565,7 +561,7 @@ public:
                 << fShapeW[1] << "," << iDepth << "," << iHeight << "," << iWidth << "," << fAttrKernelShape[0] << ","
                 << fAttrKernelShape[1] << "," << fAttrKernelShape[2] << "," << fAttrPads[0] << "," << fAttrPads[1]
                 << "," << fAttrPads[2] << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrStrides[2]
-                << "," << fAttrDilations[0] << "," << fAttrDilations[1] << "," << fAttrDilations[2] << ",tensor_" << fNX
+                << "," << 1 << "," << 1 << "," << 1 << ",tensor_" << fNX
                 << "_xcol);\n\n ";
          }
 
