@@ -502,11 +502,10 @@ public:
                 //  channels, d, h, w, k_d, k_h, k_w, pad_d, pad_h, pad_w, stride_d, stride_h, stride_w,
                 //  dilation_d, dilation_h, dilation_w,
                 //
-                << fShapeW[1] << "," << iDepth << "," << iHeight << "," << iWidth << ","
-                << fAttrKernelShape[0] << "," << fAttrKernelShape[1] << "," << fAttrKernelShape[2] << ","
-                << fAttrPads[0] << "," << fAttrPads[1] << "," << fAttrPads[2] << ","
-                << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrStrides[2] << ","
-                << 1 << "," << 1 << "," << 1 << ","
+                << fShapeW[1] << "," << iDepth << "," << iHeight << "," << iWidth << "," << fAttrKernelShape[0] << ","
+                << fAttrKernelShape[1] << "," << fAttrKernelShape[2] << "," << fAttrPads[0] << "," << fAttrPads[1]
+                << "," << fAttrPads[2] << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrStrides[2]
+                << "," << 1 << "," << 1 << "," << 1 << ","
                 << "tensor_" << fNX << "_xcol);\n\n ";
          }
          // BLAS
@@ -561,8 +560,7 @@ public:
                 << fShapeW[1] << "," << iDepth << "," << iHeight << "," << iWidth << "," << fAttrKernelShape[0] << ","
                 << fAttrKernelShape[1] << "," << fAttrKernelShape[2] << "," << fAttrPads[0] << "," << fAttrPads[1]
                 << "," << fAttrPads[2] << "," << fAttrStrides[0] << "," << fAttrStrides[1] << "," << fAttrStrides[2]
-                << "," << 1 << "," << 1 << "," << 1 << ",tensor_" << fNX
-                << "_xcol);\n\n ";
+                << "," << 1 << "," << 1 << "," << 1 << ",tensor_" << fNX << "_xcol);\n\n ";
          }
 
          // BLAS
