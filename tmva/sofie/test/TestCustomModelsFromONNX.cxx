@@ -745,7 +745,6 @@ TEST(ONNX, ConvWithStridesNoPadding)
    }
 }
 
-
 TEST(ONNX, ConvWithDynShapeStride)
 {
    // Conv1d with dynamic spatial dimension W and stride=2.
@@ -767,7 +766,6 @@ TEST(ONNX, ConvWithDynShapeStride)
       EXPECT_LE(std::abs(output[i] - correct_output[i]), DEFAULT_TOLERANCE);
    }
 }
-
 
 // Disables test (asymmetric padding not supported)
 TEST(DISABLED_ONNX, ConvWithAsymmetricPadding)
