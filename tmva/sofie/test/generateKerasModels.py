@@ -105,6 +105,7 @@ def generateConv2DModel_SamePadding_Dilated():
     model.fit(x_train, y_train, verbose=0, epochs=10, batch_size=2)
     model.save("KerasModelConv2D_SameDilated.keras")
 
+
 def generateReshapeModel():
     model = Sequential()
     model.add(Conv2D(8, kernel_size=3, activation="relu", input_shape=(4,4,1), padding="same"))
