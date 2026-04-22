@@ -22,6 +22,7 @@ models = [
     "Conv2D_channels_first",
     "Conv2D_channels_last",
     "Conv2D_padding_same",
+    "Conv2D_padding_same_dilation",
     "Conv2D_padding_valid",
     "Dense",
     "ELU",
